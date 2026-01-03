@@ -14,7 +14,7 @@ router.get('/', [
   authenticate,
   query('status').optional().isIn(['all', 'complete', 'incomplete']),
   query('priority').optional().isIn(['LOW', 'MEDIUM', 'HIGH']),
-  query('projectId').optional().isUUID(),
+  query('projectId').optional({ checkFalsy: true }).isUUID(),
   query('search').optional().trim(),
   query('view').optional().isIn(['today', 'upcoming', 'completed', 'trash'])
 ], async (req, res) => {
