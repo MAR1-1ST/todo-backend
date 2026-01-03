@@ -136,7 +136,7 @@ router.post('/', [
   body('description').optional().trim(),
   body('dueDate').optional().isISO8601().toDate(),
   body('priority').optional().isIn(['LOW', 'MEDIUM', 'HIGH']),
-  body('projectId').optional().isUUID()
+  body('projectId').optional({ nullable: true }).isUUID()
 ], async (req, res) => {
   try {
     const errors = validationResult(req);
@@ -158,15 +158,15 @@ router.post('/', [
       }
     }
 
-    const task = await prisma.task.create({
-      data: {
-        title: title.trim(),
-        description: description?.trim(),
-        dueDate,
-        priority: priority || 'MEDIUM',
-        projectId,
-        userId
-      },
+  const task = await prisma.task.create({
+    data: {
+      title: title.trim(),
+      description: description?.trim(),
+      dueDate,
+      priority: priority || 'MEDIUM',
+      projectId: projectId || null, // Ensures clean handling
+      userId
+    },
       include: {
         project: {
           select: { id: true, name: true, color: true }
@@ -189,7 +189,7 @@ router.put('/:id', [
   body('dueDate').optional().isISO8601().toDate(),
   body('priority').optional().isIn(['LOW', 'MEDIUM', 'HIGH']),
   body('isComplete').optional().isBoolean(),
-  body('projectId').optional().isUUID()
+  body('projectId').optional({ nullable: true }).isUUID()
 ], async (req, res) => {
   try {
     const errors = validationResult(req);
