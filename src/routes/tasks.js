@@ -14,7 +14,7 @@ router.get('/', [
   authenticate,
   query('status').optional().isIn(['all', 'complete', 'incomplete']),
   query('priority').optional().isIn(['LOW', 'MEDIUM', 'HIGH']),
-  query('projectId').optional({ checkFalsy: true }).isUUID(),
+  query('projectId').optional().isUUID(),
   query('search').optional().trim(),
   query('view').optional().isIn(['today', 'upcoming', 'completed', 'trash'])
 ], async (req, res) => {
@@ -136,7 +136,14 @@ router.post('/', [
   body('description').optional().trim(),
   body('dueDate').optional().isISO8601().toDate(),
   body('priority').optional().isIn(['LOW', 'MEDIUM', 'HIGH']),
-  body('projectId').optional({ nullable: true }).isUUID()
+  body('projectId').optional().custom((value) => {
+    // Allow null, undefined, or empty string (will be converted to null)
+    if (value === null || value === undefined || value === '') {
+      return true;
+    }
+    // Otherwise must be a valid UUID
+    return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+  }).withMessage('Invalid project ID format')
 ], async (req, res) => {
   try {
     const errors = validationResult(req);
@@ -158,15 +165,15 @@ router.post('/', [
       }
     }
 
-  const task = await prisma.task.create({
-    data: {
-      title: title.trim(),
-      description: description?.trim(),
-      dueDate,
-      priority: priority || 'MEDIUM',
-      projectId: projectId || null, // Ensures clean handling
-      userId
-    },
+    const task = await prisma.task.create({
+      data: {
+        title: title.trim(),
+        description: description?.trim(),
+        dueDate,
+        priority: priority || 'MEDIUM',
+        projectId,
+        userId
+      },
       include: {
         project: {
           select: { id: true, name: true, color: true }
@@ -189,7 +196,14 @@ router.put('/:id', [
   body('dueDate').optional().isISO8601().toDate(),
   body('priority').optional().isIn(['LOW', 'MEDIUM', 'HIGH']),
   body('isComplete').optional().isBoolean(),
-  body('projectId').optional({ nullable: true }).isUUID()
+  body('projectId').optional().custom((value) => {
+    // Allow null, undefined, or empty string (will be converted to null)
+    if (value === null || value === undefined || value === '') {
+      return true;
+    }
+    // Otherwise must be a valid UUID
+    return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+  }).withMessage('Invalid project ID format')
 ], async (req, res) => {
   try {
     const errors = validationResult(req);
