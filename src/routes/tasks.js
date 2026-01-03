@@ -201,8 +201,9 @@ router.put('/:id', [
     if (value === null || value === undefined || value === '') {
       return true;
     }
-    // Otherwise must be a valid UUID
-    return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+    // Otherwise must be a valid CUID (Prisma's default ID format)
+    // CUID format: c + 24 characters (alphanumeric)
+    return typeof value === 'string' && value.length > 0 && /^c[a-z0-9]{24}$/.test(value);
   }).withMessage('Invalid project ID format')
 ], async (req, res) => {
   try {
