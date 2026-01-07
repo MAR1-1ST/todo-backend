@@ -6,15 +6,30 @@ const { PrismaClient } = require('@prisma/client');
 const router = express.Router();
 const prisma = new PrismaClient();
 
-// Middleware to protect routes
 const authenticate = passport.authenticate('jwt', { session: false });
+
+/**
+ * Reusable ID Validator
+ * Checks if the value is a valid CUID (standard for Prisma)
+ * or null/empty.
+ */
+const isValidProjectId = (value) => {
+  if (value === null || value === undefined || value === '') {
+    return true;
+  }
+  // Standard Prisma CUID regex (starts with 'c', followed by 24 alphanumeric chars)
+  return typeof value === 'string' && /^c[a-z0-9]{24}$/.test(value);
+  
+  // IF YOU USE UUIDs INSTEAD, UNCOMMENT THE LINE BELOW AND COMMENT THE ONE ABOVE:
+  // return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+};
 
 // Get all tasks with filters
 router.get('/', [
   authenticate,
   query('status').optional().isIn(['all', 'complete', 'incomplete']),
   query('priority').optional().isIn(['LOW', 'MEDIUM', 'HIGH']),
-  query('projectId').optional().isUUID(),
+  query('projectId').optional().custom(isValidProjectId), // Fixed to match other routes
   query('search').optional().trim(),
   query('view').optional().isIn(['today', 'upcoming', 'completed', 'trash'])
 ], async (req, res) => {
@@ -27,10 +42,8 @@ router.get('/', [
     const { status, priority, projectId, search, view } = req.query;
     const userId = req.user.id;
 
-    // Build where clause
     let where = { userId };
 
-    // View-based filtering
     if (view === 'today') {
       const today = new Date();
       today.setHours(0, 0, 0, 0);
@@ -57,24 +70,15 @@ router.get('/', [
       where.isDeleted = false;
     }
 
-    // Status filtering
     if (status === 'complete') {
       where.isComplete = true;
     } else if (status === 'incomplete') {
       where.isComplete = false;
     }
 
-    // Priority filtering
-    if (priority) {
-      where.priority = priority;
-    }
+    if (priority) where.priority = priority;
+    if (projectId) where.projectId = projectId;
 
-    // Project filtering
-    if (projectId) {
-      where.projectId = projectId;
-    }
-
-    // Search functionality
     if (search) {
       where.OR = [
         { title: { contains: search, mode: 'insensitive' } },
@@ -85,9 +89,7 @@ router.get('/', [
     const tasks = await prisma.task.findMany({
       where,
       include: {
-        project: {
-          select: { id: true, name: true, color: true }
-        }
+        project: { select: { id: true, name: true, color: true } }
       },
       orderBy: [
         { dueDate: 'asc' },
@@ -107,25 +109,16 @@ router.get('/', [
 router.get('/:id', authenticate, async (req, res) => {
   try {
     const task = await prisma.task.findFirst({
-      where: {
-        id: req.params.id,
-        userId: req.user.id
-      },
+      where: { id: req.params.id, userId: req.user.id },
       include: {
-        project: {
-          select: { id: true, name: true, color: true }
-        }
+        project: { select: { id: true, name: true, color: true } }
       }
     });
 
-    if (!task) {
-      return res.status(404).json({ message: 'Task not found' });
-    }
-
+    if (!task) return res.status(404).json({ message: 'Task not found' });
     res.json({ task });
   } catch (error) {
-    console.error('Error fetching task:', error);
-    res.status(500).json({ message: 'Server error while fetching task' });
+    res.status(500).json({ message: 'Server error' });
   }
 });
 
@@ -136,33 +129,20 @@ router.post('/', [
   body('description').optional().trim(),
   body('dueDate').optional().isISO8601().toDate(),
   body('priority').optional().isIn(['LOW', 'MEDIUM', 'HIGH']),
-  body('projectId').optional().custom((value) => {
-    // Allow null, undefined, or empty string (will be converted to null)
-    if (value === null || value === undefined || value === '') {
-      return true;
-    }
-    // Otherwise must be a valid UUID
-    return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
-  }).withMessage('Invalid project ID format')
+  body('projectId').optional().custom(isValidProjectId).withMessage('Invalid project ID format') // Fixed
 ], async (req, res) => {
   try {
     const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      return res.status(400).json({ errors: errors.array() });
-    }
+    if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
 
     const { title, description, dueDate, priority, projectId } = req.body;
     const userId = req.user.id;
 
-    // Verify project ownership if projectId is provided
     if (projectId) {
       const project = await prisma.project.findFirst({
         where: { id: projectId, userId }
       });
-
-      if (!project) {
-        return res.status(400).json({ message: 'Invalid project ID' });
-      }
+      if (!project) return res.status(400).json({ message: 'Invalid project ID' });
     }
 
     const task = await prisma.task.create({
@@ -175,16 +155,14 @@ router.post('/', [
         userId
       },
       include: {
-        project: {
-          select: { id: true, name: true, color: true }
-        }
+        project: { select: { id: true, name: true, color: true } }
       }
     });
 
     res.status(201).json({ task, message: 'Task created successfully' });
   } catch (error) {
     console.error('Error creating task:', error);
-    res.status(500).json({ message: 'Server error while creating task' });
+    res.status(500).json({ message: 'Server error' });
   }
 });
 
@@ -196,43 +174,26 @@ router.put('/:id', [
   body('dueDate').optional().isISO8601().toDate(),
   body('priority').optional().isIn(['LOW', 'MEDIUM', 'HIGH']),
   body('isComplete').optional().isBoolean(),
-  body('projectId').optional().custom((value) => {
-    // Allow null, undefined, or empty string (will be converted to null)
-    if (value === null || value === undefined || value === '') {
-      return true;
-    }
-    // Otherwise must be a valid CUID (Prisma's default ID format)
-    // CUID format: c + 24 characters (alphanumeric)
-    return typeof value === 'string' && value.length > 0 && /^c[a-z0-9]{24}$/.test(value);
-  }).withMessage('Invalid project ID format')
+  body('projectId').optional().custom(isValidProjectId).withMessage('Invalid project ID format') // Fixed
 ], async (req, res) => {
   try {
     const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      return res.status(400).json({ errors: errors.array() });
-    }
+    if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
 
     const { title, description, dueDate, priority, isComplete, projectId } = req.body;
     const userId = req.user.id;
 
-    // Check if task exists and belongs to user
     const existingTask = await prisma.task.findFirst({
       where: { id: req.params.id, userId }
     });
 
-    if (!existingTask) {
-      return res.status(404).json({ message: 'Task not found' });
-    }
+    if (!existingTask) return res.status(404).json({ message: 'Task not found' });
 
-    // Verify project ownership if projectId is provided
     if (projectId) {
       const project = await prisma.project.findFirst({
         where: { id: projectId, userId }
       });
-
-      if (!project) {
-        return res.status(400).json({ message: 'Invalid project ID' });
-      }
+      if (!project) return res.status(400).json({ message: 'Invalid project ID' });
     }
 
     const updateData = {};
@@ -247,16 +208,14 @@ router.put('/:id', [
       where: { id: req.params.id },
       data: updateData,
       include: {
-        project: {
-          select: { id: true, name: true, color: true }
-        }
+        project: { select: { id: true, name: true, color: true } }
       }
     });
 
     res.json({ task, message: 'Task updated successfully' });
   } catch (error) {
     console.error('Error updating task:', error);
-    res.status(500).json({ message: 'Server error while updating task' });
+    res.status(500).json({ message: 'Server error' });
   }
 });
 
@@ -264,32 +223,19 @@ router.put('/:id', [
 router.patch('/:id/toggle', authenticate, async (req, res) => {
   try {
     const userId = req.user.id;
+    const task = await prisma.task.findFirst({ where: { id: req.params.id, userId } });
 
-    const task = await prisma.task.findFirst({
-      where: { id: req.params.id, userId }
-    });
-
-    if (!task) {
-      return res.status(404).json({ message: 'Task not found' });
-    }
+    if (!task) return res.status(404).json({ message: 'Task not found' });
 
     const updatedTask = await prisma.task.update({
       where: { id: req.params.id },
       data: { isComplete: !task.isComplete },
-      include: {
-        project: {
-          select: { id: true, name: true, color: true }
-        }
-      }
+      include: { project: { select: { id: true, name: true, color: true } } }
     });
 
-    res.json({ 
-      task: updatedTask, 
-      message: `Task marked as ${updatedTask.isComplete ? 'complete' : 'incomplete'}` 
-    });
+    res.json({ task: updatedTask, message: 'Status updated' });
   } catch (error) {
-    console.error('Error toggling task:', error);
-    res.status(500).json({ message: 'Server error while toggling task' });
+    res.status(500).json({ message: 'Server error' });
   }
 });
 
@@ -297,27 +243,16 @@ router.patch('/:id/toggle', authenticate, async (req, res) => {
 router.delete('/:id', authenticate, async (req, res) => {
   try {
     const userId = req.user.id;
-
-    const task = await prisma.task.findFirst({
-      where: { id: req.params.id, userId }
-    });
-
-    if (!task) {
-      return res.status(404).json({ message: 'Task not found' });
-    }
+    const task = await prisma.task.findFirst({ where: { id: req.params.id, userId } });
+    if (!task) return res.status(404).json({ message: 'Task not found' });
 
     await prisma.task.update({
       where: { id: req.params.id },
-      data: {
-        isDeleted: true,
-        deletedAt: new Date()
-      }
+      data: { isDeleted: true, deletedAt: new Date() }
     });
-
     res.json({ message: 'Task moved to trash' });
   } catch (error) {
-    console.error('Error deleting task:', error);
-    res.status(500).json({ message: 'Server error while deleting task' });
+    res.status(500).json({ message: 'Server error' });
   }
 });
 
@@ -325,32 +260,17 @@ router.delete('/:id', authenticate, async (req, res) => {
 router.patch('/:id/restore', authenticate, async (req, res) => {
   try {
     const userId = req.user.id;
-
-    const task = await prisma.task.findFirst({
-      where: { id: req.params.id, userId, isDeleted: true }
-    });
-
-    if (!task) {
-      return res.status(404).json({ message: 'Task not found in trash' });
-    }
+    const task = await prisma.task.findFirst({ where: { id: req.params.id, userId, isDeleted: true } });
+    if (!task) return res.status(404).json({ message: 'Task not found in trash' });
 
     const restoredTask = await prisma.task.update({
       where: { id: req.params.id },
-      data: {
-        isDeleted: false,
-        deletedAt: null
-      },
-      include: {
-        project: {
-          select: { id: true, name: true, color: true }
-        }
-      }
+      data: { isDeleted: false, deletedAt: null },
+      include: { project: { select: { id: true, name: true, color: true } } }
     });
-
-    res.json({ task: restoredTask, message: 'Task restored successfully' });
+    res.json({ task: restoredTask, message: 'Task restored' });
   } catch (error) {
-    console.error('Error restoring task:', error);
-    res.status(500).json({ message: 'Server error while restoring task' });
+    res.status(500).json({ message: 'Server error' });
   }
 });
 
@@ -358,23 +278,13 @@ router.patch('/:id/restore', authenticate, async (req, res) => {
 router.delete('/:id/permanent', authenticate, async (req, res) => {
   try {
     const userId = req.user.id;
+    const task = await prisma.task.findFirst({ where: { id: req.params.id, userId, isDeleted: true } });
+    if (!task) return res.status(404).json({ message: 'Task not found in trash' });
 
-    const task = await prisma.task.findFirst({
-      where: { id: req.params.id, userId, isDeleted: true }
-    });
-
-    if (!task) {
-      return res.status(404).json({ message: 'Task not found in trash' });
-    }
-
-    await prisma.task.delete({
-      where: { id: req.params.id }
-    });
-
+    await prisma.task.delete({ where: { id: req.params.id } });
     res.json({ message: 'Task permanently deleted' });
   } catch (error) {
-    console.error('Error permanently deleting task:', error);
-    res.status(500).json({ message: 'Server error while permanently deleting task' });
+    res.status(500).json({ message: 'Server error' });
   }
 });
 
